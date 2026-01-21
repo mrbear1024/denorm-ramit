@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Training artifacts
+result/
+runs/
+logs/
+*.pth
+*.pt
+*.ckpt
+
+# OS metadata
+.DS_Store
