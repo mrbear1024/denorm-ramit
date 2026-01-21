@@ -11,6 +11,7 @@ import os
 import random
 from tensorboardX import SummaryWriter
 import sys
+from tqdm import tqdm
 
 sys.path.append('./others/program/')
 from Evaluation_metrics import Image_Quality_Evaluation
@@ -79,16 +80,17 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
     epochs_no_improve = 0
     prev_best_model_path = None  # to store the path of the previously best model  # 保存上一次最佳模型的路径
 
-    for epoch in range(num_epochs):
+    epoch_iter = tqdm(range(num_epochs), desc="Epochs", unit="epoch", ascii=True)
+    for epoch in epoch_iter:
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
-        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        tqdm.write('Epoch {}/{}'.format(epoch, num_epochs - 1))
         logfile_train.write('Epoch {}/{}'.format(epoch, num_epochs - 1) + '\n')
         # After the model is trained for each epoch, use the validation set to verify the model performance
         # 每个 epoch 训练后，使用验证集评估模型性能
         # 1. model_train  # 训练阶段
-        print('-' * 10)
-        print('model_train')
+        tqdm.write('-' * 10)
+        tqdm.write('model_train')
         logfile_train.write('-' * 10 + '\n')
         logfile_train.write('model_train' + '\n')
 
@@ -101,7 +103,15 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
         total_loss_train = 0
 
         model.train()
-        for x, y in dataloader_train:
+        train_pbar = tqdm(
+            dataloader_train,
+            total=len(dataloader_train),
+            desc='Train {}/{}'.format(epoch + 1, num_epochs),
+            unit='batch',
+            leave=False,
+            ascii=True,
+        )
+        for x, y in train_pbar:
             inputs = x.to(device)  # input: SV_CBCT_img_2D  # 输入图像
             gts = y.to(device)  # gt: FV_CBCT_img_2D  # 真实值图像
             # labels = gts - inputs  # residual.   #########删除  # 残差
@@ -123,24 +133,24 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
             scaler.update()
             total_loss_train += loss.item()
 
-            print('%d/%d,train_loss:%0.15f' % (step_train, total_step_train, loss.item()))
+            train_pbar.set_postfix(loss='{:.6f}'.format(loss.item()))
             logfile_train.write('%d/%d,train_loss:%0.15f' % (step_train, total_step_train, loss.item()) + '\n')
             step_train += 1
 
         avg_loss_train = total_loss_train / step_train
-        print('epoch %d mean_loss_train: %0.15f\n' % (epoch, avg_loss_train))
+        tqdm.write('epoch %d mean_loss_train: %0.15f\n' % (epoch, avg_loss_train))
         logfile_train.write('epoch %d mean_loss_train:%0.15f\n' % (epoch, avg_loss_train) + '\n')
         mem_stats = _get_cuda_memory_stats()
         if mem_stats is not None:
             mem_line = _format_cuda_memory_stats("train_epoch_end", mem_stats)
-            print(mem_line)
+            tqdm.write(mem_line)
             logfile_train.write(mem_line + '\n')
         logfile_train.flush()
         writer.add_scalar('Train/Mean_Loss', avg_loss_train, epoch)  # TensorBoard  # 记录训练损失
 
         # 2. model_validation  # 验证阶段
-        print('-' * 10)
-        print('model_validation')
+        tqdm.write('-' * 10)
+        tqdm.write('model_validation')
         logfile_val.write('Epoch {}/{}'.format(epoch, num_epochs - 1) + '\n')
         logfile_val.write('-' * 10 + '\n')
         logfile_val.write('model_validation' + '\n')
@@ -158,7 +168,15 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
 
         model.eval()
         with torch.no_grad():
-            for x, y in dataloader_val:
+            val_pbar = tqdm(
+                dataloader_val,
+                total=len(dataloader_val),
+                desc='Val {}/{}'.format(epoch + 1, num_epochs),
+                unit='batch',
+                leave=False,
+                ascii=True,
+            )
+            for x, y in val_pbar:
                 batch_PSNR_val = 0
 
                 inputs = x.to(device)  # input: SV_CBCT_img_2D  # 输入图像
@@ -189,22 +207,24 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
                 batch_avg_PSNR_val = batch_PSNR_val / outputs.shape[0]
                 # *******
 
-                print('%d/%d,val_loss:%0.15f' % (step_val, total_step_val, loss.item()))
+                val_pbar.set_postfix(
+                    loss='{:.6f}'.format(loss.item()),
+                    psnr='{:.3f}'.format(batch_avg_PSNR_val),
+                )
                 logfile_val.write('%d/%d,val_loss:%0.15f' % (step_val, total_step_val, loss.item()) + '\n')
-                print('%d/%d,mean_val_PSNR:%0.15f' % (step_val, total_step_val, batch_avg_PSNR_val))
                 logfile_val.write('%d/%d,mean_val_PSNR:%0.15f' % (step_val, total_step_val, batch_avg_PSNR_val) + '\n')
                 step_val += 1
 
         avg_loss_val = total_loss_val / step_val
-        print('epoch %d mean_loss_val: %0.15f' % (epoch, avg_loss_val))
+        tqdm.write('epoch %d mean_loss_val: %0.15f' % (epoch, avg_loss_val))
         logfile_val.write('epoch %d mean_loss_val:%0.15f' % (epoch, avg_loss_val) + '\n')
         avg_PSNR_val = total_PSNR_val / data_size_val
-        print('epoch %d mean_PSNR_val: %0.15f\n' % (epoch, avg_PSNR_val))
+        tqdm.write('epoch %d mean_PSNR_val: %0.15f\n' % (epoch, avg_PSNR_val))
         logfile_val.write('epoch %d mean_PSNR_val:%0.15f\n' % (epoch, avg_PSNR_val) + '\n')
         mem_stats = _get_cuda_memory_stats()
         if mem_stats is not None:
             mem_line = _format_cuda_memory_stats("val_epoch_end", mem_stats)
-            print(mem_line)
+            tqdm.write(mem_line)
             logfile_val.write(mem_line + '\n')
         logfile_val.flush()
         writer.add_scalar('Val/Mean_Loss', avg_loss_val, epoch)  # TensorBoard  # 记录验证损失
@@ -229,7 +249,7 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
         else:
             epochs_no_improve += 1
             if epochs_no_improve == early_stopping_patience:
-                print('Early stopping!')
+                tqdm.write('Early stopping!')
                 logfile_train.write('Early stopping!' + '\n')
                 logfile_val.write('Early stopping!' + '\n')
                 logfile_train.close()

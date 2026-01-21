@@ -11,6 +11,9 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
+# IDEs
+.idea/
+
 # Training artifacts
 result/
 runs/
@@ -18,6 +21,7 @@ logs/
 *.pth
 *.pt
 *.ckpt
+*.pkl
 
 # OS metadata
 .DS_Store
