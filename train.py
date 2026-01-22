@@ -14,6 +14,7 @@ from tensorboardX import SummaryWriter
 import sys
 from tqdm import tqdm
 import torch.distributed as dist
+import torch.multiprocessing as mp
 
 sys.path.append('./others/program/')
 from Evaluation_metrics import Image_Quality_Evaluation
@@ -418,6 +419,37 @@ def main(args):
     return None
 
 
+def _distributed_worker(local_rank, args):
+    os.environ["RANK"] = str(args.node_rank * args.gpus_per_node + local_rank)
+    os.environ["WORLD_SIZE"] = str(args.nnodes * args.gpus_per_node)
+    os.environ["LOCAL_RANK"] = str(local_rank)
+    main(args)
+
+
+def launch(args):
+    use_env = "RANK" in os.environ and "WORLD_SIZE" in os.environ
+    if use_env:
+        main(args)
+        return
+
+    if args.nnodes < 1 or args.gpus_per_node < 1:
+        raise SystemExit("nnodes and gpus_per_node must be >= 1")
+
+    if args.nnodes > 1 and not args.master_addr:
+        raise SystemExit("master_addr is required for multi-node training")
+
+    if args.master_addr:
+        os.environ.setdefault("MASTER_ADDR", args.master_addr)
+    else:
+        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", str(args.master_port))
+
+    if args.nnodes > 1 or args.gpus_per_node > 1:
+        mp.spawn(_distributed_worker, nprocs=args.gpus_per_node, args=(args,))
+    else:
+        main(args)
+
+
 if __name__ == '__main__':
     # # ***complexity of the model***  # 模型复杂度
     # from thop import profile
@@ -445,10 +477,15 @@ if __name__ == '__main__':
     parse.add_argument("--seed", type=int, default=0)
     parse.add_argument("--backend", type=str, default="nccl")
     parse.add_argument("--local_rank", type=int, default=0)
+    parse.add_argument("--nnodes", type=int, default=1)
+    parse.add_argument("--node_rank", type=int, default=0)
+    parse.add_argument("--gpus_per_node", type=int, default=1)
+    parse.add_argument("--master_addr", type=str, default="")
+    parse.add_argument("--master_port", type=int, default=29500)
     args = parse.parse_args()
 
     # GPU Number  # GPU 编号
-    if "RANK" not in os.environ and "WORLD_SIZE" not in os.environ:
+    if "RANK" not in os.environ and "WORLD_SIZE" not in os.environ and args.nnodes == 1 and args.gpus_per_node == 1:
         os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
-    main(args)
+    launch(args)
