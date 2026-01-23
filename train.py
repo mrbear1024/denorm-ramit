@@ -44,7 +44,8 @@ def set_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        # Avoid initializing contexts on all GPUs in DDP processes.
+        # torch.cuda.manual_seed_all(seed)
         # torch.backends.cudnn.deterministic = True  # 是否使用确定性算法
         # torch.backends.cudnn.benchmark = False  # 是否启用 cudnn benchmark
 
@@ -66,8 +67,16 @@ def init_distributed_mode(args):
             args.backend = "gloo"
         if torch.cuda.is_available():
             torch.cuda.set_device(args.local_rank)
-        dist.init_process_group(backend=args.backend, init_method="env://")
-        dist.barrier()
+        init_kwargs = {"backend": args.backend, "init_method": "env://"}
+        if torch.cuda.is_available():
+            try:
+                dist.init_process_group(**init_kwargs, device_id=args.local_rank)
+            except TypeError:
+                dist.init_process_group(**init_kwargs)
+            dist.barrier(device_ids=[args.local_rank])
+        else:
+            dist.init_process_group(**init_kwargs)
+            dist.barrier()
 
 
 def cleanup_distributed():
@@ -123,7 +132,10 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
     logfile_train = open('./result/train/train_loss_log.txt', 'w') if is_main_process(args) else None
     logfile_val = open('./result/validation/val_loss_psnr_log.txt', 'w') if is_main_process(args) else None
     use_amp = bool(args.amp) and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled = use_amp)
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    else:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     # The early stopping and Learning Rate Scheduling are determined with the average PSNR on the validation set.
     # 早停与学习率调度由验证集上的平均 PSNR 决定
@@ -175,7 +187,11 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
             #loss = criterion(outputs, gts)
             # torch.amp.autocast('cuda', args...)
             # with torch.cuda.amp.autocast(enabled = use_amp):
-            with torch.cuda.amp.autocast('cuda', enabled = use_amp):
+            if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+                autocast_ctx = torch.amp.autocast("cuda", enabled=use_amp)
+            else:
+                autocast_ctx = torch.cuda.amp.autocast(enabled=use_amp)
+            with autocast_ctx:
                 outputs = model(inputs)
                 loss = criterion(outputs, gts)
             #loss = criterion(outputs, labels)  # MSE loss  # 均方误差损失
@@ -247,7 +263,11 @@ def train_model(model, criterion, optimizer, scheduler, dataloader_train, datalo
                 # forward  # 前向传播
                 #outputs = model(inputs)
                 #loss = criterion(outputs, gts)
-                with torch.cuda.amp.autocast(enabled = use_amp_val):
+                if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+                    autocast_ctx = torch.amp.autocast("cuda", enabled=use_amp_val)
+                else:
+                    autocast_ctx = torch.cuda.amp.autocast(enabled=use_amp_val)
+                with autocast_ctx:
                     outputs = model(inputs)
                     loss = criterion(outputs, gts)
                 #loss = criterion(outputs, labels)
